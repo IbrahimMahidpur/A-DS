@@ -46,8 +46,37 @@ class StatisticalReasoningAgent:
         return report
 
     def _check_normality(self, df: pd.DataFrame) -> dict:
-        # Skipping scipy.stats as it hangs on this system
-        return {"skipped": "scipy.stats unavailable"}
+        """Check normality for numeric columns.
+        Uses Shapiro-Wilk for <=5000 samples, D'Agostino's K^2 test for larger.
+        Falls back to skew/kurtosis heuristic if scipy.stats unavailable.
+        Skips columns with fewer than 8 non‑null values.
+        Returns a dict mapping column name -> {"is_normal": bool, "p_value": float|None, "test": str}.
+        """
+        result = {}
+        numeric_df = df.select_dtypes(include=np.number)
+        for col in numeric_df.columns:
+            series = numeric_df[col].dropna()
+            if len(series) < 8:
+                continue
+            try:
+                from scipy.stats import shapiro, normaltest
+                if len(series) <= 5000:
+                    stat, p = shapiro(series)
+                    test_name = "shapiro"
+                else:
+                    stat, p = normaltest(series)
+                    test_name = "dagostino"
+                result[col] = {"is_normal": p > 0.05, "p_value": float(p), "test": test_name}
+            except Exception as e:
+                # fallback heuristic (skew/kurtosis) if scipy unavailable or error
+                try:
+                    skew = series.skew()
+                    kurt = series.kurtosis()
+                    is_norm = abs(skew) < 0.5 and abs(kurt) < 0.5
+                    result[col] = {"is_normal": is_norm, "p_value": None, "test": "heuristic"}
+                except Exception:
+                    result[col] = {"is_normal": False, "p_value": None, "test": "failed"}
+        return result
 
     def _check_correlation(self, df: pd.DataFrame) -> dict:
         """Compute correlation matrix and identify strong correlations.
@@ -95,8 +124,44 @@ class StatisticalReasoningAgent:
         }
 
     def _check_multicollinearity(self, df: pd.DataFrame, target_col: Optional[str]) -> dict:
-        # Skipping statsmodels as it hangs on this system
-        return {"skipped": "statsmodels unavailable"}
+        """Check multicollinearity via Variance Inflation Factor (VIF).
+        Drops the target column before computing VIF on numeric features.
+        Returns dict with keys:
+          - "multicollinearity_detected": bool
+          - "high_vif_cols": {col: vif}
+          - "vif_scores": {col: vif}
+        Uses a 30‑second timeout and falls back if statsmodels unavailable.
+        """
+        try:
+            import concurrent.futures
+            def compute_vif():
+                numeric_df = df.select_dtypes(include=np.number)
+                if target_col and target_col in numeric_df.columns:
+                    numeric_df = numeric_df.drop(columns=[target_col])
+                # Drop rows with any NA to avoid errors in VIF calculation
+                clean_df = numeric_df.dropna()
+                if clean_df.shape[1] == 0:
+                    return {}
+                X = clean_df.values
+                from statsmodels.stats.outliers_influence import variance_inflation_factor
+                vif_dict = {}
+                for i in range(X.shape[1]):
+                    vif = variance_inflation_factor(X, i)
+                    col_name = clean_df.columns[i]
+                    vif_dict[col_name] = float(vif)
+                return vif_dict
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                vif_scores = executor.submit(compute_vif).result(timeout=30)
+            high_vif = {col: v for col, v in vif_scores.items() if v > 10}
+            return {
+                "multicollinearity_detected": bool(high_vif),
+                "high_vif_cols": high_vif,
+                "vif_scores": vif_scores,
+            }
+        except Exception as e:
+            # If statsmodels not installed or timeout or any other error
+            return {"skipped": "statsmodels not installed or VIF calculation failed", "multicollinearity_detected": False}
+
 
     def _check_stationarity(self, df: pd.DataFrame) -> dict:
         # Skipping statsmodels as it hangs on this system
