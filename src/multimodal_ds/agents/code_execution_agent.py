@@ -92,9 +92,11 @@ class CodeExecutionAgent:
         rag_context = self._retrieve_rag_context(task_description)
         if rag_context:
             data_context = f"Relevant document context (from ChromaDB):\n{rag_context}\n\n" + data_context
-        if file_paths:
-            file_list = "\n".join(f"  - {_Path(fp).name}" for fp in file_paths)
-            data_context = f"Available data files (use exact names):\n{file_list}\n\n{data_context}"
+        from multimodal_ds.core.context_pool import get_context_pool
+        pool = get_context_pool(self.session_id)
+        pool_summary = pool.get_summary()
+        if pool_summary and pool_summary != "No shared context yet.":
+            data_context = f"Shared session context from other agents:\n{pool_summary}\n\n" + data_context
         task = {"name": task_description[:80], "description": task_description}
         return self.execute_task(task=task, data_context=data_context, file_paths=file_paths, max_retries=max_retries)
 

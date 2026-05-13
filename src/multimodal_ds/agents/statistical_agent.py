@@ -43,6 +43,14 @@ class StatisticalReasoningAgent:
             result=str(report["interpretation"])[:500],
             session_id=self.session_id
         )
+        # Store findings in shared context pool
+        from multimodal_ds.core.context_pool import get_context_pool
+        pool = get_context_pool(self.session_id)
+        pool.set("stat_normality", report["normality"], agent="statistical_agent")
+        pool.set("stat_correlation", report["correlation"], agent="statistical_agent")
+        pool.set("stat_multicollinearity", report["multicollinearity"], agent="statistical_agent")
+        pool.set("stat_recommendations", report["recommendations"], agent="statistical_agent")
+
         return report
 
     def _check_normality(self, df: pd.DataFrame) -> dict:
