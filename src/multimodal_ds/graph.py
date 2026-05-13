@@ -418,14 +418,27 @@ def _reviewer_node(state):
         })
 
     session_id = state.get("session_id", "default")
-    eval_agent_cls = globals().get('EvaluationAgent')
-    if eval_agent_cls is None:
-        raise RuntimeError('EvaluationAgent not available')
-    # For unit‑test purposes, construct a minimal report object with the expected interface
-    dummy_report = type('DummyReport', (), {
-        'to_dict': lambda self: {"task_outputs": [t.get('output_preview', '') for t in task_results], "task_results": [t.get('output_preview', '') for t in task_results]}
-    })()
-    return {"eval_report": {}}
+    data_context = _build_data_context_for_eval(state)
+    try:
+        eval_agent = EvaluationAgent(session_id=session_id)
+        stat_report = state.get("statistical_report", {})
+        report = eval_agent.evaluate_task_results(
+            task_results=task_results,
+            data_context=data_context,
+            stat_report=stat_report if stat_report else None,
+        )
+        return {"eval_report": report.to_dict()}
+    except Exception as e:
+        logger.warning(f"[Reviewer] EvaluationAgent failed: {e} — returning empty report")
+        return {"eval_report": {
+            "session_id": session_id,
+            "task_count": len(task_results),
+            "flagged_count": 0,
+            "pass_count": len(task_results),
+            "overall_session_score": 5.0,
+            "session_verdict": "UNKNOWN",
+            "evaluations": [],
+        }}
 
 
 def _build_data_context_for_eval(state: dict) -> str:
