@@ -201,10 +201,71 @@ def _planner_node(state):
     # collect UnifiedDocument objects). The planner returns a dict with the
     # analysis plan and tasks.
     # -----------------------------------------------------------------
+    from multimodal_ds.core.schema import UnifiedDocument, DataType, ProcessingStatus
+
+    proxy_docs = []
+
+    # 1. Tabular documents
+    for t in state.get("tabular_summaries", []):
+        doc = UnifiedDocument(
+            data_type=DataType.TABULAR,
+            status=ProcessingStatus.DONE,
+            text_content=t.get("sample", ""),
+            schema_info={
+                "columns": t.get("columns", []),
+                "shape": t.get("shape", []),
+                "numeric_cols": [c for c, d in t.get("dtypes", {}).items()
+                                 if "int" in d or "float" in d],
+            },
+            metadata={"automl_suggestion": t.get("automl_suggestion", {})}
+        )
+        proxy_docs.append(doc)
+
+    # 2. Text/PDF documents (exclude BLOCKED)
+    for d in state.get("parsed_documents", []):
+        text = d.get("text_content", "")
+        if text and not text.startswith("[BLOCKED"):
+            doc = UnifiedDocument(
+                data_type=DataType.TEXT,
+                status=ProcessingStatus.DONE,
+                text_content=text[:1500],
+            )
+            proxy_docs.append(doc)
+
+    # 3. Audio transcripts
+    for transcript in state.get("audio_transcripts", []):
+        if transcript and not transcript.startswith("[BLOCKED"):
+            doc = UnifiedDocument(
+                data_type=DataType.AUDIO,
+                status=ProcessingStatus.DONE,
+                text_content=transcript[:1000],
+            )
+            proxy_docs.append(doc)
+
+    # 4. Inject statistical report as context
+    stat_report = state.get("statistical_report", {})
+    stat_context = ""
+    if stat_report and isinstance(stat_report, dict):
+        non_normal = [k for k, v in stat_report.get("normality", {}).items()
+                          if isinstance(v, dict) and not v.get("is_normal", True)]
+        n_strong = stat_report.get("correlation", {}).get("n_strong", 0)
+        mc = stat_report.get("multicollinearity", {}).get("multicollinearity_detected", False)
+        stat_context = (
+            f"Statistical findings: non-normal columns={non_normal}, "
+            f"strong_correlations={n_strong}, multicollinearity={mc}"
+        )
+        if stat_context:
+            doc = UnifiedDocument(
+                data_type=DataType.TEXT,
+                status=ProcessingStatus.DONE,
+                text_content=f"Statistical Validation Report:\n{stat_context}",
+            )
+            proxy_docs.append(doc)
+
     try:
         plan_result = run_planner(
             user_objective=state.get("user_query", ""),
-            documents=[],
+            documents=proxy_docs,
             session_id=state.get("session_id", "default"),
         )
     except Exception as e:
@@ -339,6 +400,12 @@ def _executor_node(state):
         files = safe_files
         if session_id == "test_session":
             files = ["dummy_output.txt"]
+        # Telemetry handling after files are determined
+        from multimodal_ds.core.telemetry import get_telemetry
+        tel = get_telemetry(session_id)
+        if exec_result.get("success"):
+            tel.increment("tasks_succeeded")
+        tel.record_event("task_complete", {"task": task.get("name"), "success": exec_result.get("success"), "files": files, "step": step_idx})
     except Exception as e:
         logger.warning(f"[Graph] Artifact collection failed: {e}")
         files = raw_files  # fallback to original list
