@@ -168,21 +168,27 @@ Write the complete analysis report now. Be sure to mention any saved models or d
 
     report = _call_ollama(prompt)
 
-    # ── Persist to disk ───────────────────────────────────────────────────
-    session_dir = Path(OUTPUT_DIR) / session_id
-    session_dir.mkdir(parents=True, exist_ok=True)
+    # ── Delegate to ReportGeneratorAgent ──────────────────────────────────
+    executive_summary       = ""
+    business_recommendations: list = []
+    try:
+        from multimodal_ds.agents.report_generator_agent import ReportGeneratorAgent  # noqa: PLC0415
+        rg_agent    = ReportGeneratorAgent(session_id=session_id)
+        gen_report  = rg_agent.generate(state=state)
+        executive_summary        = gen_report.executive_summary
+        business_recommendations = gen_report.business_recommendations
+        logger.info(
+            f"[Reporter] ReportGeneratorAgent complete "
+            f"(confidence={gen_report.confidence_score:.2f})"
+        )
+    except Exception as exc:
+        logger.warning(f"[Reporter] ReportGeneratorAgent failed: {exc}")
 
-    report_path = session_dir / "final_report.md"
-    report_path.write_text(report, encoding="utf-8")
-    logger.info(f"[Reporter] Report saved → {report_path}")
-
-    # Persist eval_report as JSON
-    if eval_report:
-        eval_path = session_dir / "eval_report.json"
-        eval_path.write_text(json.dumps(eval_report, indent=2), encoding="utf-8")
-        logger.info(f"[Reporter] Eval report saved → {eval_path}")
-
-    return {"final_report": report}
+    return {
+        "final_report":             report,
+        "executive_summary":        executive_summary,
+        "business_recommendations": business_recommendations,
+    }
 
 
 # ── Standalone entry point (for direct calls from orchestrator) ────────────

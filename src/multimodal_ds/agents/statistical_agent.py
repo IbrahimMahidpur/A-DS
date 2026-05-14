@@ -172,8 +172,48 @@ class StatisticalReasoningAgent:
 
 
     def _check_stationarity(self, df: pd.DataFrame) -> dict:
-        # Skipping statsmodels as it hangs on this system
-        return {"skipped": "statsmodels unavailable"}
+        """Check stationarity of numeric columns using ADF test.
+        Returns a dict mapping column name -> {
+            "is_stationary": bool,
+            "p_value": float|None,
+            "test_stat": float|None,
+            "used_lag": int|None,
+            "critical_values": dict|None,
+        }.
+        Skips columns with ≤30 non‑null observations.
+        If statsmodels is unavailable, returns a single entry indicating the skip.
+        """
+        try:
+            from statsmodels.tsa.stattools import adfuller
+        except Exception:
+            return {"skipped": "statsmodels not installed"}
+        result = {}
+        numeric_df = df.select_dtypes(include=np.number)
+        for col in numeric_df.columns:
+            series = numeric_df[col].dropna()
+            if len(series) <= 30:
+                continue
+            try:
+                adf_res = adfuller(series, autolag="AIC")
+                test_stat, p_value, usedlag, nobs, crit_vals, icbest = adf_res
+                is_stationary = p_value < 0.05
+                result[col] = {
+                    "is_stationary": is_stationary,
+                    "p_value": float(p_value),
+                    "test_stat": float(test_stat),
+                    "used_lag": usedlag,
+                    "critical_values": {k: float(v) for k, v in crit_vals.items()},
+                }
+            except Exception:
+                # On failure for this column, mark as non‑stationary with unknown stats
+                result[col] = {
+                    "is_stationary": False,
+                    "p_value": None,
+                    "test_stat": None,
+                    "used_lag": None,
+                    "critical_values": None,
+                }
+        return result
 
     def _interpret_findings(self, report: dict, shape: tuple) -> str:
         import httpx

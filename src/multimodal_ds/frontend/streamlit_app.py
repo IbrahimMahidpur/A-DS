@@ -17,6 +17,7 @@ from multimodal_ds.core.message_bus import MessageType
 from multimodal_ds.graph import build_graph, make_initial_state
 from multimodal_ds.config import OUTPUT_DIR
 
+st.set_page_config(layout="wide", page_title="Multimodal DS Console", page_icon="🧬")
 st.title("Multimodal Data Science Engine")
 PRIMARY_GREEN = "#1D9E75"
 BG_DARK = "#0F111A"
@@ -220,7 +221,7 @@ def create_zip(files: List[Path]) -> bytes:
     return buf.getvalue()
 
 # ── Main UI ─────────────────────────────────────────────────────────
-st.set_page_config(layout="wide", page_title="Multimodal DS Console", page_icon="🧬")
+# st.set_page_config moved to top (already set)
 apply_custom_styles()
 
 with st.sidebar:

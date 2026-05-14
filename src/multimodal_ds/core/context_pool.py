@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -17,7 +17,7 @@ class ContextEntry:
     agent: str
     key: str
     value: Any
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     ttl_seconds: Optional[int] = None
 
 
@@ -41,7 +41,7 @@ class SharedContextPool:
             if entry is None:
                 return default
             if entry.ttl_seconds:
-                age = (datetime.utcnow() - datetime.fromisoformat(entry.timestamp)).total_seconds()
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(entry.timestamp)).total_seconds()
                 if age > entry.ttl_seconds:
                     del self._store[key]
                     return default

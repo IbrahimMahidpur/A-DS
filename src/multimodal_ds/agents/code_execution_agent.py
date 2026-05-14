@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from multimodal_ds.config import CODER_MODEL, OLLAMA_BASE_URL, LLM_TIMEOUT, OUTPUT_DIR
+from multimodal_ds.config import CODE_GEN_MODEL, CODE_FIX_MODEL, OLLAMA_BASE_URL, LLM_TIMEOUT, OUTPUT_DIR
 from multimodal_ds.memory.agent_memory import AgentMemory
 from multimodal_ds.core.observability import agent_span, get_session_tracker
 
@@ -22,7 +22,7 @@ _MEM_MB         = int(os.getenv("SANDBOX_MEM_MB",       "512"))
 _STDOUT_CHARS   = int(os.getenv("SANDBOX_STDOUT_CHARS", "8000"))
 _PROC_TIMEOUT_S = int(os.getenv("SANDBOX_TIMEOUT_S",    "300"))
 
-SYSTEM_PROMPT = """You are a senior data scientist with 20+ years of production ML experience.
+SYSTEM_PROMPT = """You are a senior data scientist with 50+ years of production ML experience.
 
 BEFORE writing any code, you MUST:
 1. Print df.columns.tolist() and df.shape — NEVER assume column names
@@ -55,9 +55,13 @@ Output ONLY valid Python code inside ```python ... ``` fences. No commentary out
 def _sandbox_preexec() -> None:
     try:
         import resource
+        # Limit CPU time
         resource.setrlimit(resource.RLIMIT_CPU, (_CPU_SECONDS, _CPU_SECONDS))
+        # Limit memory (address space)
         mem_bytes = _MEM_MB * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+        # Limit number of processes to prevent fork‑bomb attacks
+        resource.setrlimit(resource.RLIMIT_NPROC, (64, 64))
     except Exception:
         pass
 
@@ -119,10 +123,52 @@ class CodeExecutionAgent:
             pass
         return ""
 
+    def _inject_statistical_constraints(self, constraints: list) -> list:
+        """Append Optuna tuning constraints to the list if available.
+
+        Retrieves tuning results from the shared context pool for this session. If a
+        best overall model is present, formats the model name and its best hyper‑
+        parameters as a Python comment string and adds it to ``constraints``.
+        Returns the updated list.
+        """
+        from multimodal_ds.core.context_pool import get_context_pool
+        import json
+        try:
+            pool = get_context_pool(self.session_id)
+            tuning = pool.get("tuning_results", {})
+            if tuning and tuning.get("best_overall_model"):
+                best_model = tuning["best_overall_model"]
+                best_params = tuning.get("best_params", {})
+                param_str = json.dumps(best_params, indent=2)
+                constraint = f"# Optuna tuning result: best model = {best_model} with params = {param_str}"
+                constraints.append(constraint)
+        except Exception as e:
+            logger.debug(f"[CodeAgent] Failed to inject tuning constraints: {e}")
+        return constraints
     def _generate_code(self, task_desc: str, data_context: str, past_context: str) -> str:
+        """Generate Python code for a task.
+
+        The method builds a prompt that includes:
+        * the task description and provided data context,
+        * any past relevant memory,
+        * statistical constraints (e.g., Optuna tuning results),
+        * cross‑session lessons via the ReflectionAgent.
+        The LLM is then called and the extracted code is returned.
+        """
         import httpx
-        prompt = f"""Task: {task_desc}\nData Context:\n{data_context[:1500]}\nPrevious Context:\n{past_context[:500]}\nWorking directory: {self.working_dir}\nWrite Python code. Save all outputs to the current directory."""
-        model = CODER_MODEL.replace("ollama/", "")
+        # Build constraints list and inject Optuna tuning info if available
+        constraints: list = []
+        constraints = self._inject_statistical_constraints(constraints)
+        constraint_section = "\n".join(constraints) + ("\n\n" if constraints else "")
+        prompt = f"""Task: {task_desc}\nData Context:\n{data_context[:1500]}\nPrevious Context:\n{past_context[:500]}\n{constraint_section}Working directory: {self.working_dir}\nWrite Python code. Save all outputs to the current directory."""
+        # Pull cross-session lessons
+        from multimodal_ds.agents.reflection_agent import ReflectionAgent
+        reflect = ReflectionAgent(session_id=self.session_id)
+        past_lessons = reflect.get_lessons_for_task(task_desc)
+        if past_lessons:
+            prompt = past_lessons + "\n\n" + prompt
+            logger.info(f"[CodeAgent] Injected {len(past_lessons.splitlines())} past lessons into prompt")
+        model = CODE_GEN_MODEL.replace("ollama/", "")
         try:
             response = httpx.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
@@ -135,6 +181,7 @@ class CodeExecutionAgent:
         except Exception as e:
             logger.error(f"[CodeAgent] Code generation failed: {e}")
         return ""
+
 
     def _execute_code(self, code: str, file_paths: Optional[list] = None):
         import shutil
@@ -211,7 +258,7 @@ class CodeExecutionAgent:
 
     def _generate_fix(self, failed_code: str, error_output: str, task_desc: str) -> str:
         import httpx
-        model = CODER_MODEL.replace("ollama/", "")
+        model = CODE_GEN_MODEL.replace("ollama/", "")
         prompt = f"""Fix this Python code that failed.\nTask: {task_desc}\nFailed code:\n```python\n{failed_code[:1500]}\n```\nError:\n{error_output[:500]}\nProvide ONE complete fixed Python script in ```python ... ``` fences."""
         try:
             response = httpx.post(

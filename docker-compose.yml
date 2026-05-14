@@ -40,6 +40,11 @@ services:
         ollama pull qwen2.5:7b &&
         ollama pull llava:7b &&
         ollama pull nomic-embed-text &&
+        ollama pull deepseek-coder-v2:16b &&
+        ollama pull qwen2.5-coder:7b &&
+        ollama pull deepseek-r1:7b &&
+        ollama pull mistral:7b &&
+        ollama pull mxbai-embed-large &&
         echo 'All models pulled successfully'
       "
     restart: "no"

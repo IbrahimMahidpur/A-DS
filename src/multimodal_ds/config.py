@@ -22,15 +22,19 @@ FAISS_DIR  = Path(os.getenv("FAISS_INDEX_DIR",    "./data/faiss"))
 for d in [DATA_DIR, OUTPUT_DIR, CHROMA_DIR, FAISS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# ── Ollama / LLM ───────────────────────────────────────────
+# Specialized model assignments (override with env vars)
+# Falls back to PLANNER_MODEL/CODER_MODEL if specialized model not pulled
+STATS_INTERPRETER_MODEL = os.getenv("STATS_MODEL", os.getenv("REVIEWER_MODEL", "ollama/mistral:7b"))
+CODE_GEN_MODEL = os.getenv("CODE_GEN_MODEL", os.getenv("CODER_MODEL", "ollama/deepseek-coder-v2:16b"))
+CODE_FIX_MODEL = os.getenv("CODE_FIX_MODEL", os.getenv("CODER_MODEL", "ollama/qwen2.5-coder:7b"))
+HYPOTHESIS_MODEL = os.getenv("HYPOTHESIS_MODEL", os.getenv("PLANNER_MODEL", "ollama/deepseek-r1:7b"))
+EMBED_MODEL = os.getenv("EMBED_MODEL", "ollama/mxbai-embed-large")
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 PLANNER_MODEL   = os.getenv("PLANNER_MODEL",  "ollama/qwen2.5:7b")
 CODER_MODEL     = os.getenv("CODER_MODEL",    "ollama/qwen2.5:7b")
 REVIEWER_MODEL  = os.getenv("REVIEWER_MODEL", "ollama/qwen2.5:7b")
 VISION_MODEL    = os.getenv("VISION_MODEL",   "ollama/llava:7b")
-EMBED_MODEL     = os.getenv("EMBED_MODEL",    "ollama/nomic-embed-text")
-
-# ── Agent settings ─────────────────────────────────────────
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "10"))
 LLM_TIMEOUT    = int(os.getenv("LLM_TIMEOUT",    "600"))
 LLM_RETRIES    = int(os.getenv("LLM_RETRIES",    "1"))

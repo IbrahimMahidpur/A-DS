@@ -122,11 +122,26 @@ class VisualizationAgent:
     """
 
     def __init__(self, session_id: str, working_dir: Optional[str] = None):
-        self.session_id  = session_id
+        self.session_id = session_id
         # working_dir is the BASE directory — session subdir appended here
         base = Path(working_dir) if working_dir else Path(OUTPUT_DIR)
         self.working_dir = base / session_id
         self.working_dir.mkdir(parents=True, exist_ok=True)
+
+    def _publish_viz_request(self) -> None:
+        """Publish VIZ_REQUEST to signal that visualization has started."""
+        try:
+            from multimodal_ds.core.message_bus import AgentMessage, MessageType, get_bus
+            bus = get_bus()
+            bus.publish(AgentMessage(
+                msg_type=MessageType.VIZ_REQUEST,
+                payload={"session_id": self.session_id},
+                sender="visualization_agent",
+                session_id=self.session_id,
+            ))
+        except Exception as e:
+            logger.debug(f"[VizAgent] Bus publish VIZ_REQUEST failed: {e}")
+
 
     # ── Main entry point ───────────────────────────────────────────────────
 
@@ -195,10 +210,13 @@ class VisualizationAgent:
         if target_col and target_col in df.columns:
             self._chart_roc_curve(df, target_col, numeric_cols, manifest)
 
-        # ── Save manifest ──────────────────────────────────────────────────
-        manifest.save(self.working_dir)
+        # Optuna results chart (if tuning was run)
+        tuning_results = getattr(self, "_tuning_results", None)
+        if tuning_results and tuning_results.get("best_overall_model"):
+            self._chart_optuna_results(tuning_results, manifest)
 
-        # ── Bus: VIZ_COMPLETE ──────────────────────────────────────────────
+        # Save manifest JSON
+        manifest.save(self.working_dir)
         self._publish_viz_complete(manifest)
 
         logger.info(
@@ -631,7 +649,83 @@ class VisualizationAgent:
 
     # ── Message bus integration ────────────────────────────────────────────
 
-    def _publish_viz_request(self) -> None:
+    def _chart_optuna_results(self, tuning_results: dict, manifest: ChartManifest) -> None:
+        """Generate Optuna optimization history and parameter importance charts."""
+        try:
+            import optuna
+            import optuna.importance as oim
+
+            best_model = tuning_results.get("best_overall_model")
+            best_score = tuning_results.get("best_overall_score")
+
+            # ------- Optimization History -------
+            fig_hist = go.Figure()
+            max_trial = 0
+            for model_name, result in tuning_results.items():
+                if model_name in {"best_overall_model", "best_overall_score"}:
+                    continue
+                study = result.get("study")
+                if not study:
+                    continue
+                trials = sorted(study.trials, key=lambda t: t.number)
+                xs = [t.number for t in trials]
+                ys = [t.value for t in trials]
+                if not xs:
+                    continue
+                max_trial = max(max_trial, max(xs))
+                fig_hist.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name=model_name))
+
+            # Horizontal dashed line for best overall score
+            if max_trial > 0 and best_score is not None:
+                fig_hist.add_hline(y=best_score, line_dash="dash", annotation_text=f"Best Score: {best_score:.4f}", annotation_position="top left")
+
+            fig_hist.update_layout(
+                title="Optuna Hyperparameter Optimization History",
+                xaxis_title="Trial",
+                yaxis_title="Score",
+                legend_title="Model",
+            )
+            hist_file = "optuna_history.html"
+            self._save_chart(fig_hist, hist_file)
+            narrative_hist = self._get_narrative(
+                "Optuna optimization history for hyperparameter tuning",
+                None,
+                fallback="Optimization history shows how scores evolve across trials for each model.",
+            )
+            manifest.add("optuna_history", hist_file, "Optuna Optimization History", narrative_hist, (0, 0))
+
+            # ------- Parameter Importance (best model) -------
+            if best_model:
+                best_res = tuning_results.get(best_model, {})
+                study = best_res.get("study")
+                if study:
+                    try:
+                        importances = oim.get_param_importances(study)
+                    except Exception:
+                        importances = {}
+                    if importances:
+                        fig_imp = go.Figure()
+                        sorted_imp = sorted(importances.items(), key=lambda kv: kv[1])
+                        params, vals = zip(*sorted_imp)
+                        fig_imp.add_trace(go.Bar(x=vals, y=params, orientation='h'))
+                        fig_imp.update_layout(
+                            title=f"Parameter Importance — {best_model}",
+                            xaxis_title="Importance",
+                            yaxis_title="Parameter",
+                        )
+                        imp_file = "optuna_param_importance.html"
+                        self._save_chart(fig_imp, imp_file)
+                        narrative_imp = self._get_narrative(
+                            f"Optuna parameter importance for the best model {best_model}",
+                            None,
+                            fallback=f"Parameter importance chart highlights which hyperparameters most affect performance for {best_model}.",
+                        )
+                        manifest.add("optuna_param_importance", imp_file, f"Parameter Importance — {best_model}", narrative_imp, (0, 0))
+        except Exception as e:
+            logger.error(f"[VizAgent] Optuna result charts failed: {e}")
+        """Store tuning results for later chart generation."""
+        self._tuning_results = tuning_results
+
         """Publish VIZ_REQUEST to signal that visualization has started."""
         try:
             from multimodal_ds.core.message_bus import AgentMessage, MessageType, get_bus

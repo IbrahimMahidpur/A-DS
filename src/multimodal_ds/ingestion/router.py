@@ -51,6 +51,14 @@ def _apply_pii_gate(doc: UnifiedDocument) -> UnifiedDocument:
       entity types. Nothing leaks — structured_data and text_content are
       cleared on BLOCKED documents.
     """
+    # Guard: skip scanning if document already has a PII report (already processed)
+    if doc.metadata.get("pii_report"):
+        logger.debug(
+            f"[Router] Skipping PII scan for already‑processed document "
+            f"{Path(doc.provenance.source_path).name}"
+        )
+        return doc
+
     guard = _get_pii_guard()
     if guard is None:
         return doc

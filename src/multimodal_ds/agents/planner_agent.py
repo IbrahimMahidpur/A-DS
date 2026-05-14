@@ -37,7 +37,7 @@ def _perform_web_search(objective: str) -> str:
 
 import operator
 
-from multimodal_ds.config import PLANNER_MODEL, OLLAMA_BASE_URL, LLM_TIMEOUT
+from multimodal_ds.config import HYPOTHESIS_MODEL, PLANNER_MODEL, OLLAMA_BASE_URL, LLM_TIMEOUT
 from multimodal_ds.memory.agent_memory import AgentMemory
 from multimodal_ds.core.schema import UnifiedDocument
 
@@ -95,7 +95,8 @@ class PlannerState(TypedDict):
     messages: Annotated[list, operator.add]
     hypotheses: list[str]
     final_plan: str
-    error: str
+    model_selection: dict
+    ensemble_code_template: str
 
 
 def _call_ollama(prompt: str, system: str = "", max_tokens: int = 4000) -> str:
@@ -170,7 +171,24 @@ def decompose_into_tasks(state: PlannerState) -> PlannerState:
     if len(profiles_text) > 8000:
         profiles_text = profiles_text[:8000] + "\n... [truncated for length] ..."
 
-    # If the objective hints at external references, perform a (placeholder) web search and include results
+            # Inject model selection context if available
+        model_context = ""
+        if state.get("model_selection"):
+            ms = state["model_selection"]
+            model_context = f"""
+Model Selection (already determined by statistical analysis):
+- Primary model: {ms.get('primary_model')}
+- Ensemble: {ms.get('ensemble_models')}
+- CV strategy: {ms.get('cv_strategy')}
+- Scoring metric: {ms.get('scoring_metric')}
+- Required preprocessing: {ms.get('preprocessing_steps')}
+- Rationale: {ms.get('rationale')}
+
+IMPORTANT: Your modeling task MUST use these specific models, not invent new ones.
+If an ensemble_code_template is available in context, use it as the basis for the modeling step.
+"""
+
+        # If the objective hints at external references, perform a (placeholder) web search and include results
     web_results = ""
     if _needs_web_search(state["user_objective"]):
         web_results = _perform_web_search(state["user_objective"])
@@ -188,6 +206,7 @@ Objective: {state['user_objective']}
 Hypotheses to test:
 {hypotheses_text}
 
+{model_context}
 Data available:
 {profiles_text}
 
@@ -299,7 +318,8 @@ def run_planner(
         messages=[],
         hypotheses=[],
         final_plan="",
-        error=""
+        model_selection={},
+        ensemble_code_template="",
     )
 
     graph = build_planner_graph()

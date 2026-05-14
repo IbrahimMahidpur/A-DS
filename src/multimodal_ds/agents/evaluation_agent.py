@@ -436,6 +436,8 @@ Respond with ONLY this JSON structure (no markdown, no explanation):
         raw_scores: dict,
         files:      list[str],
     ) -> TaskEvaluation:
+        # Copy raw_scores to avoid mutating the caller's dict
+        raw_scores = dict(raw_scores)
         llm_available  = not raw_scores.pop("_fallback", False)
         recommendation = raw_scores.pop("recommendation", "")
 
@@ -463,26 +465,28 @@ Respond with ONLY this JSON structure (no markdown, no explanation):
         overall = round(weighted_sum / weight_total) if weight_total > 0 else FALLBACK_SCORE
         overall = max(0, min(10, overall))
 
-        # Extended weighting for different artifact types (visualizations, model files, reports)
-        file_type_score = 0.0
-        for f in files:
-            name = f.lower()
-            if name.endswith(('.png', '.jpg', '.jpeg', '.webp', '.html')):
-                file_type_score += 0.5   # visualizations are most valuable
-            elif name.endswith(('.pkl', '.joblib', '.pt', '.h5')):
-                file_type_score += 0.3   # model artifacts
-            elif name.endswith(('.json', '.txt', '.csv')):
-                file_type_score += 0.2   # reports / data exports
-        # Cap total contribution to 2 points
-        file_type_score = min(file_type_score, 2.0)
-        overall = min(10, overall + file_type_score)
-        # Boost output_completeness proportionally (max +2)
-        for dim in dimensions:
-            if dim.name == "output_completeness":
-                boost = int(round((file_type_score / 2) * 2))  # 0‑2 points
-                dim.score = min(10, dim.score + boost)
-                dim.reasoning += f" (artifact weighting bonus: +{boost})"
-                break
+        # Apply file type weighting only if LLM was available
+        if llm_available:
+            file_type_score = 0.0
+            for f in files:
+                name = f.lower()
+                if name.endswith(('.png', '.jpg', '.jpeg', '.webp', '.html')):
+                    file_type_score += 0.5   # visualizations are most valuable
+                elif name.endswith(('.pkl', '.joblib', '.pt', '.h5')):
+                    file_type_score += 0.3   # model artifacts
+                elif name.endswith(('.json', '.txt', '.csv')):
+                    file_type_score += 0.2   # reports / data exports
+            # Cap total contribution to 2 points
+            file_type_score = min(file_type_score, 2.0)
+            overall = min(10, overall + file_type_score)
+            # Boost output_completeness proportionally (max +2)
+            for dim in dimensions:
+                if dim.name == "output_completeness":
+                    boost = int(round((file_type_score / 2) * 2))  # 0‑2 points
+                    dim.score = min(10, dim.score + boost)
+                    dim.reasoning += f" (artifact weighting bonus: +{boost})"
+                    break
+
 
         if not llm_available:
             is_flagged = bool(flag_reasons)

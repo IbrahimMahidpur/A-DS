@@ -126,6 +126,20 @@ class TestTextIngestion:
 # ── Router tests ───────────────────────────────────────────────────────────
 
 class TestRouter:
+    def test_multi_modal_routing(self, sample_csv, sample_txt):
+        # Test that ingesting both a CSV and a TXT file together returns two valid UnifiedDocuments
+        from multimodal_ds.ingestion.router import ingest_multiple
+        from multimodal_ds.core.schema import DataType, ProcessingStatus
+
+        docs = ingest_multiple([str(sample_csv), str(sample_txt)])
+        assert len(docs) == 2
+        # Verify we have one tabular and one text document
+        types = {doc.data_type for doc in docs}
+        assert DataType.TABULAR in types
+        assert DataType.TEXT in types
+        # Ensure both documents have a DONE status
+        for doc in docs:
+            assert doc.status == ProcessingStatus.DONE
     def test_routes_csv(self, sample_csv):
         from multimodal_ds.ingestion.router import route_and_ingest
         from multimodal_ds.core.schema import DataType

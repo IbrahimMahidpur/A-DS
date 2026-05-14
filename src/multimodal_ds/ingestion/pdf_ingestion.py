@@ -139,44 +139,44 @@ def _extract_with_vision(pdf, page_nums: list[int], file_path: str) -> list[str]
     """
     # Try ColPali first
     try:
-+        from multimodal_ds.ingestion.pdf_visual_parsing_agent import extract_layout_text
-+        colpali_results = extract_layout_text(file_path, page_nums)
-+        if colpali_results:
-+            logger.info(f"[PDF Vision] ColPali extracted {len(colpali_results)} pages")
-+            return colpali_results
-+    except Exception as e:
-+        logger.warning(f"[PDF Vision] ColPali extraction failed: {e}")
-+
-+    # Fallback to original LLaVA‑based vision extraction
-+    import base64
-+    import httpx
-+
-+    results = []
-+    for page_num in page_nums[:5]:  # Limit to first 5 image pages
-+        try:
-+            page = pdf[page_num]
-+            pix = page.get_pixmap(dpi=150)
-+            img_bytes = pix.tobytes("png")
-+            img_b64 = base64.b64encode(img_bytes).decode()
-+
-+            response = httpx.post(
-+                f"{OLLAMA_BASE_URL}/api/generate",
-+                json={
-+                    "model": VISION_MODEL.replace("ollama/", ""),
-+                    "prompt": (
-+                        "Extract and describe all text, tables, charts, and figures "
-+                        "visible in this document page. Be thorough and structured."
-+                    ),
-+                    "images": [img_b64],
-+                    "stream": False,
-+                },
-+                timeout=120,
-+            )
-+            if response.status_code == 200:
-+                text = response.json().get("response", "")
-+                results.append(f"[Page {page_num + 1} — Vision]\n{text}")
-+        except Exception as e:
-+            logger.warning(f"[PDF Vision] Page {page_num} failed: {e}")
-+
-+    return results
+        from multimodal_ds.ingestion.pdf_visual_parsing_agent import extract_layout_text
+        colpali_results = extract_layout_text(file_path, page_nums)
+        if colpali_results:
+            logger.info(f"[PDF Vision] ColPali extracted {len(colpali_results)} pages")
+            return colpali_results
+    except Exception as e:
+        logger.warning(f"[PDF Vision] ColPali extraction failed: {e}")
+
+    # Fallback to original LLaVA‑based vision extraction
+    import base64
+    import httpx
+
+    results = []
+    for page_num in page_nums[:5]:  # Limit to first 5 image pages
+        try:
+            page = pdf[page_num]
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img_b64 = base64.b64encode(img_bytes).decode()
+
+            response = httpx.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model": VISION_MODEL.replace("ollama/", ""),
+                    "prompt": (
+                        "Extract and describe all text, tables, charts, and figures "
+                        "visible in this document page. Be thorough and structured."
+                    ),
+                    "images": [img_b64],
+                    "stream": False,
+                },
+                timeout=120,
+            )
+            if response.status_code == 200:
+                text = response.json().get("response", "")
+                results.append(f"[Page {page_num + 1} — Vision]\n{text}")
+        except Exception as e:
+            logger.warning(f"[PDF Vision] Page {page_num} failed: {e}")
+
+    return results
 
